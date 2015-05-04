@@ -4,6 +4,10 @@
 #include <util/delay.h>
 #include <avr/sleep.h>
 
+extern "C" {
+    #include "nokia/nokia5110.h"
+}
+
 #define LED PB4
 #define BUTTON PB3
 
@@ -56,6 +60,10 @@ void setup() {
     sei();
 
     setLedLevel(255);
+
+    lcdInit();
+
+    lcdPrint(0, 0, "Hello world");
 
     powerOff();
 }
