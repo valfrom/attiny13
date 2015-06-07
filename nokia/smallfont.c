@@ -8,7 +8,7 @@
 #include <stdint.h>
 #include <avr/pgmspace.h>
 #include "smallfont.h"
-#include "../hardware.h"
+#include "hardware.h"
 
 // Only provide the font if the driver is enabled
 #ifdef LCD_ENABLED

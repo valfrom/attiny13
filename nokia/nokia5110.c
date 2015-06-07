@@ -1,12 +1,12 @@
 /**
 * Nokia 5110 LCD interface
 *
-* May-4-2015 valfrom
+* May-4-2015 valfrom, based on https://github.com/thegaragelab/tinytemplate
 **/
 
 #include <avr/io.h>
 #include <avr/pgmspace.h>
-#include "../hardware.h"
+#include "hardware.h"
 #include "smallfont.h"
 #include "nokia5110.h"
 
@@ -19,22 +19,19 @@
 // instruction cycles per loop.
 #define WAIT_INNER (F_CPU / 6000)
 
-/** An inaccurate delay function
- *
- * This function will delay for the given number of milliseconds. This is not
- * an accurate delay (interrupt activity will interfere with the timing and it
- * uses instruction timing approximations to consume the time) but should be
- * close enough for many purposes without having to revert to a timer interrupt.
- */
-void wait(uint16_t millis) {
-  for(uint16_t outer=0; outer<millis; outer++) {
-    for(uint16_t inner=0; inner<WAIT_INNER; inner++) {
-      asm volatile(
-        "  nop    \n\t"
-        );
-    }
+
+#if defined(LCD_USE_PROGRAM_RESET) 
+
+void waitReset() {
+  uint16_t inner;
+  for(inner=0; inner<WAIT_INNER*10; inner++) {
+    asm volatile(
+      "  nop    \n\t"
+      );
   }
 }
+
+#endif
 
 /** Transfer data to a slave (MSB first)
  *
@@ -43,23 +40,19 @@ void wait(uint16_t millis) {
  * @param data the data to transfer
  * @param bits the number of bits to transfer
  */
-void sspiOutMSB(uint16_t data) {
-  uint16_t mask = (1 << (8 - 1));
-  uint8_t output = (1 << LCD_MOSI);
-  uint8_t clock = (1 << LCD_SCK);
-  for(uint8_t bits=0;bits<8;bits++) {
+void sspiOutMSB(uint8_t data) {
+  uint8_t bit;
+  for(bit = 0x80; bit; bit >>= 1) {
+    // Bring the clock low
+    LCD_SCK_LOW();
     // Set data
-    if(data & mask) {
-      PORTB |= output;
+    if(data & bit) {
+      LCD_MOSI_HIGH();
     } else {
-      PORTB &= ~output;
+      LCD_MOSI_LOW();
     }
     // Bring the clock high
-    PORTB |= clock;
-    // Move to the next bit
-    mask = mask >> 1;
-    // Bring the clock low again
-    PORTB &= ~clock;
+    LCD_SCK_HIGH();
   }
 }
 
@@ -68,8 +61,8 @@ void sspiOutMSB(uint16_t data) {
  * @param data the data byte to send.
  */
 void lcdData(uint8_t data) {
-  // Bring CD high
-  PORTB |= (1 << LCD_CD);
+  // // Bring CD high
+  LCD_CD_HIGH();
   // Send the data
   sspiOutMSB(data);
 }
@@ -80,7 +73,7 @@ void lcdData(uint8_t data) {
  */
 void lcdCommand(uint8_t cmd) {
   // Bring CD low
-  PORTB &= ~(1 << LCD_CD);
+  LCD_CD_LOW();
   // Send the data
   sspiOutMSB(cmd);
 }
@@ -92,20 +85,30 @@ void lcdCommand(uint8_t cmd) {
  * @ref hardware.h.
  */
 void lcdInit() {
-  // // Set up the output pins, ensuring they are all 'low' to start
-  uint8_t val = (1 << LCD_SCK) | (1 << LCD_MOSI) | (1 << LCD_RESET) | (1 << LCD_CD);
-  PORTB &= ~val;
-  DDRB |= val;
+  LCD_SCK_SET_OUTPUT();
+  LCD_MOSI_SET_OUTPUT();
+  LCD_CD_SET_OUTPUT();
+
+  LCD_SCK_LOW();
+  LCD_MOSI_LOW();
+  LCD_CD_LOW();
+
+#if defined(LCD_USE_PROGRAM_RESET) 
+  LCD_RESET_SET_OUTPUT();
+  LCD_RESET_LOW();
   // Do a hard reset on the LCD
-  wait(10);
-  PORTB |= (1 << LCD_RESET);
+  waitReset();
+  //PORTB |= (1 << LCD_RESET);
+  LCD_RESET_HIGH();
+#endif
+
   // Initialise the LCD
   lcdCommand(0x21);  // LCD Extended Commands.
-  lcdCommand(0xA1);  // Set LCD Vop (Contrast).
+  lcdCommand(0x80|LCD_CONTRAST_VALUE);  // Set LCD Vop (Contrast).
   lcdCommand(0x04);  // Set Temp coefficent.
   lcdCommand(0x14);  // LCD bias mode 1:48.
   lcdCommand(0x20);  // LCD Normal commands
-  lcdCommand(0x0C);  // Normal display, horizontal addressing
+  lcdCommand(0x08 | 0x04);  // Normal display, horizontal addressing
 }
 
 /** Clear the screen
@@ -117,26 +120,25 @@ void lcdClear() {
   // Set the position
   lcdCommand(0x80);
   lcdCommand(0x40);
-  // Fill in the whole display
-  for(uint16_t index = 0; index < (LCD_COL * LCD_ROW); index++) {
+  uint16_t index;
+  for(index = 0; index < (LCD_COL * LCD_ROW); index++) {
     lcdData(CLEAR_BYTE);
   }
 }
 
-/** Clear a single row
- *
- * Clears a single character row from the left edge of the screen to the right.
- *
- * @param row the row number (0 to 5) to clear.
- */
-void lcdClearRow(uint8_t row) {
-  // Set the position
-  lcdCommand(0x80);
-  lcdCommand(0x40 | (row % LCD_ROW));
-  // Fill in the row
-  for(uint8_t index = 0; index < LCD_COL; index++) {
-    lcdData(CLEAR_BYTE);
+uint8_t bitScale(uint8_t b, uint8_t shift) {
+  uint8_t i;
+  uint8_t r = 0;
+  for(i = 0; i < 8; i++) {
+    uint8_t bit = i / 2;
+    if(b & (1 << (bit + shift))) {
+      bit = 1;
+    } else {
+      bit = 0;
+    }
+    r |= (bit << i);
   }
+  return r;
 }
 
 /** Write a single character
@@ -153,27 +155,42 @@ void lcdClearRow(uint8_t row) {
  * @param ch  the character to display. If the character is out of range it
  *            will be replaced with the '?' character.
  */
-void lcdPrintChar(uint8_t row, uint8_t col, char ch) {
+void lcdPrintChar(uint8_t row, uint8_t acol, char ch, uint8_t size) {
   // Make sure it is on the screen
-  if((row>=LCD_ROW)||(col>=LCD_COL)) {
+  if((row>=LCD_ROW)||(acol>=LCD_COL)) {
     return;
   }
   // If the character is invalid replace it with the '?'
   if((ch<0x20)||(ch>0x7f)) {
     ch = '?';
   }
-  // Set the starting address
-  lcdCommand(0x80 | col);
-  lcdCommand(0x40 | (row % LCD_ROW));
-  // And send the column data
-  const uint8_t *chdata = SMALL_FONT + ((ch - 0x20) * 5);
-  for(uint8_t pixels = 0; (pixels < DATA_WIDTH) && (col < LCD_COL); pixels++, col++, chdata++) {
-    uint8_t data = pgm_read_byte_near(chdata);
-    lcdData(data);
-  }
-  // Add the padding byte
-  if(col < LCD_COL) {
-    lcdData(CLEAR_BYTE);
+  
+  uint8_t i;
+  for(i = 0; i < size; i++) {
+    uint8_t col = acol;
+    // Set the starting address
+    lcdCommand(0x80 | col);
+    lcdCommand(0x40 | ((row + i) % LCD_ROW));
+    // And send the column data
+    const uint8_t *chdata = SMALL_FONT + ((ch - 0x20) * 5);
+    uint8_t pixels;
+
+    for(pixels = 0; (pixels < DATA_WIDTH) && (col < LCD_COL); pixels++, col++, chdata++) {
+      uint8_t data = pgm_read_byte_near(chdata);
+
+      if(size != 2) {
+        lcdData(data);
+        continue;
+      }
+      data = bitScale(data, i * 4);
+      lcdData(data);
+      lcdData(data);
+    }
+
+    // Add the padding byte
+    if(col < LCD_COL) {
+      lcdData(CLEAR_BYTE);
+    }
   }
 }
 
@@ -194,9 +211,9 @@ void lcdPrintChar(uint8_t row, uint8_t col, char ch) {
  * @param str the string to display. If a character in the string is out of
  *            range it will be replaced with the '?' character.
  */
-void lcdPrint(uint8_t row, uint8_t col, const char *str) {
-  for(;(*str!='\0')&&(col<LCD_COL);col+=CHAR_WIDTH,str++) {
-    lcdPrintChar(row, col, *str);
+void lcdPrint(uint8_t row, uint8_t col, const char *str, uint8_t size) {
+  for(;(*str!='\0')&&(col<LCD_COL);col+=CHAR_WIDTH*size,str++) {
+    lcdPrintChar(row, col, *str, size);
   }
 }
 

@@ -8,7 +8,7 @@ extern "C" {
     #include "nokia/nokia5110.h"
 }
 
-#define LED PB4
+#define LED PB5
 #define BUTTON PB3
 
 #define BODS 7                   //BOD Sleep bit in MCUCR
@@ -27,11 +27,23 @@ void powerOff();
 
 // interrupt service routine
 ISR(PCINT0_vect) {
-    if(ledLevel == 100) {
+    if(ledLevel < 255) {
         setLedLevel(255);
+        // Disable interrupts
+        cli();
+        _delay_ms(100);
+        // Enable interrupts
+        sei();
         return;
+    } else {
+        setLedLevel(0);
+        // Disable interrupts
+        cli();
+        _delay_ms(300);
+        // Enable interrupts
+        sei();
+        powerOff();
     }
-    setLedLevel(100);
     return;
 }
 
@@ -63,9 +75,9 @@ void setup() {
 
     lcdInit();
 
-    lcdPrint(0, 0, "Hello world");
+    lcdPrint(0, 0, "0123456789", 2);
 
-    powerOff();
+    // powerOff();
 }
 
 void powerOff() {

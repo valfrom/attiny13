@@ -1,11 +1,15 @@
 /**
 * Nokia 5110 LCD interface
 *
-* May-4-2015 valfrom
+* May-4-2015 valfrom, based on https://github.com/thegaragelab/tinytemplate
 **/
 
 #ifndef __NOKIA5110_H
 #define __NOKIA5110_H
+
+#if defined(ARDUINO) && ARDUINO >= 100
+	#include "Arduino.h"
+#endif
 
 /** Number of columns */
 #define LCD_COL 84
@@ -58,7 +62,7 @@ void lcdClear();
  * @param ch  the character to display. If the character is out of range it
  *            will be replaced with the '?' character.
  */
-void lcdPrintChar(uint8_t row, uint8_t col, char ch);
+void lcdPrintChar(uint8_t row, uint8_t col, char ch, uint8_t size);
 
 /** Write a nul terminated string
  *
@@ -77,7 +81,7 @@ void lcdPrintChar(uint8_t row, uint8_t col, char ch);
  * @param str the string to display. If a character in the string is out of
  *            range it will be replaced with the '?' character.
  */
-void lcdPrint(uint8_t row, uint8_t col, const char *str);
+void lcdPrint(uint8_t row, uint8_t col, const char *str, uint8_t size);
 
 #ifdef __cplusplus
 } // extern "C"
